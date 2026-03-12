@@ -58,9 +58,13 @@ else:
         RUN_MODE = "both"
 
 
+# Sentinel for undefined variance (division by zero when prod count = 0)
+VARIANCE_UNDEFINED = -1
+
+
 def _variance_pass(variance_pct, threshold_pct):
-    """Pass when variance is negative (staging has more or same) OR absolute variance is within threshold."""
-    if variance_pct is None:
+    """Pass when variance is negative (staging has more or same) OR absolute variance is within threshold. Returns None when undefined (prod=0)."""
+    if variance_pct is None or variance_pct == VARIANCE_UNDEFINED:
         return None
     try:
         v = float(variance_pct)
@@ -219,9 +223,9 @@ def run_tc004_exchange_counts(tc003_result):
                     row["variance_pct"] = round((prod - stage) / prod * 100, 2)
                     row["pass"] = _variance_pass(row["variance_pct"], VARIANCE_THRESHOLD_PERCENT)
                 else:
-                    # Both 0 or prod=0: no variance; pass when prod == stage
-                    row["variance_pct"] = 0.0 if stage == 0 else 100.0
-                    row["pass"] = (prod == stage)
+                    # prod=0: variance undefined (division by zero); set -1
+                    row["variance_pct"] = VARIANCE_UNDEFINED
+                    row["pass"] = None
                 if row["pass"] is False:
                     results["passed"] = False
             results["tables"][core].append(row)
@@ -261,10 +265,9 @@ def run_tc_news_created_on():
         if results["pass"] is False:
             results["passed"] = False
     elif prod is not None and stage is not None:
-        results["variance_pct"] = 0.0 if stage == 0 else 100.0
-        results["pass"] = prod == stage
-        if not results["pass"]:
-            results["passed"] = False
+        # prod=0: variance undefined (division by zero); set -1
+        results["variance_pct"] = VARIANCE_UNDEFINED
+        results["pass"] = None
     return results
 
 
@@ -394,8 +397,9 @@ def run_tc005b_freshness_by_period():
                     row["variance_pct"] = round((prod - stage) / prod * 100, 2)
                     row["pass"] = _variance_pass(row["variance_pct"], threshold)
                 else:
-                    row["variance_pct"] = 0.0 if stage == 0 else 100.0
-                    row["pass"] = prod == stage
+                    # prod=0: variance undefined (division by zero); set -1
+                    row["variance_pct"] = VARIANCE_UNDEFINED
+                    row["pass"] = None
                 if row["pass"] is False:
                     results["passed"] = False
             period_rows.append(row)
@@ -817,7 +821,7 @@ pre {{ background: #eee; padding: 12px; overflow-x: auto; font-size: 13px; }}
         for r in rows:
             v = r.get("variance_pct")
             p = r.get("pass")
-            v_str = str(v) if v is not None else "—"
+            v_str = "—" if v is None or v == VARIANCE_UNDEFINED else str(v)
             p_str = tr(p) if p is not None else "—"
             pc = r.get("prod_count")
             sc = r.get("stage_count")
@@ -843,7 +847,9 @@ pre {{ background: #eee; padding: 12px; overflow-x: auto; font-size: 13px; }}
         p_nd = nd.get("pass")
         row_cl = "fail" if p_nd is False else ""
         cell_cl = tr_class(p_nd) if p_nd is not None else ""
-        html += f"<tr class=\"{row_cl}\"><td>{nd.get('core', 'NEWS')}</td><td>{nd.get('field', '—')}</td><td>Last {nd.get('period_months', '—')} months</td><td>{nd.get('prod_count') if nd.get('prod_count') is not None else '—'}</td><td>{nd.get('stage_count') if nd.get('stage_count') is not None else '—'}</td><td>{nd.get('variance_pct') if nd.get('variance_pct') is not None else '—'}</td><td class=\"{cell_cl}\">{tr(p_nd) if p_nd is not None else '—'}</td></tr>\n"
+        nd_var = nd.get("variance_pct")
+        nd_var_str = "—" if nd_var is None or nd_var == VARIANCE_UNDEFINED else str(nd_var)
+        html += f"<tr class=\"{row_cl}\"><td>{nd.get('core', 'NEWS')}</td><td>{nd.get('field', '—')}</td><td>Last {nd.get('period_months', '—')} months</td><td>{nd.get('prod_count') if nd.get('prod_count') is not None else '—'}</td><td>{nd.get('stage_count') if nd.get('stage_count') is not None else '—'}</td><td>{nd_var_str}</td><td class=\"{cell_cl}\">{tr(p_nd) if p_nd is not None else '—'}</td></tr>\n"
         html += "</tbody></table>\n"
 
     html += """
@@ -864,7 +870,9 @@ pre {{ background: #eee; padding: 12px; overflow-x: auto; font-size: 13px; }}
                 err = r.get("error") or "—"
                 row_cl = "fail" if p is False else ""
                 cell_cl = tr_class(p) if p is not None else ""
-                html += f"<tr class=\"{row_cl}\"><td>{r.get('core')}</td><td>{r.get('prod_count') if r.get('prod_count') is not None else '—'}</td><td>{r.get('stage_count') if r.get('stage_count') is not None else '—'}</td><td>{r.get('variance_pct') if r.get('variance_pct') is not None else '—'}</td><td class=\"{cell_cl}\">{tr(p) if p is not None else '—'}</td><td title='{err}'>{err if err != '—' else ''}</td></tr>\n"
+                r_var = r.get("variance_pct")
+                r_var_str = "—" if r_var is None or r_var == VARIANCE_UNDEFINED else str(r_var)
+                html += f"<tr class=\"{row_cl}\"><td>{r.get('core')}</td><td>{r.get('prod_count') if r.get('prod_count') is not None else '—'}</td><td>{r.get('stage_count') if r.get('stage_count') is not None else '—'}</td><td>{r_var_str}</td><td class=\"{cell_cl}\">{tr(p) if p is not None else '—'}</td><td title='{err}'>{err if err != '—' else ''}</td></tr>\n"
             html += "</tbody></table>\n"
         if tc005b.get("errors"):
             html += f"<p class='fail'>Errors: {'; '.join(tc005b['errors'])}</p>\n"
