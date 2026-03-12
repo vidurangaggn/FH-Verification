@@ -202,7 +202,7 @@ def run_tc004_exchange_counts(tc003_result):
             prod, stage = row["prod_count"], row["stage_count"]
             if prod is not None and stage is not None and prod != "—" and stage != "—" and prod > 0:
                 # Signed variance: (stage - prod) / prod * 100 (negative = staging has fewer docs)
-                row["variance_pct"] = round((stage - prod) / prod * 100, 2)
+                row["variance_pct"] = round((prod - stage) / prod * 100, 2)
                 row["pass"] = abs(row["variance_pct"]) <= VARIANCE_THRESHOLD_PERCENT
                 if not row["pass"]:
                     results["passed"] = False
@@ -238,7 +238,7 @@ def run_tc_news_created_on():
             results["stage_count"] = n
     prod, stage = results["prod_count"], results["stage_count"]
     if prod is not None and stage is not None and prod > 0:
-        results["variance_pct"] = round((stage - prod) / prod * 100, 2)
+        results["variance_pct"] = round((prod - stage) / prod * 100, 2)
         results["pass"] = abs(results["variance_pct"]) <= VARIANCE_THRESHOLD_PERCENT
         if not results["pass"]:
             results["passed"] = False
