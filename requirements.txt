@@ -1,0 +1,4 @@
+# FH Verification - Test runner
+# No external dependencies required. Uses Python 3.7+ standard library only.
+# Optional: for development/linting
+# requests>=2.28.0
