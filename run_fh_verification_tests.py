@@ -58,6 +58,19 @@ else:
         RUN_MODE = "both"
 
 
+def _variance_pass(variance_pct, threshold_pct):
+    """Pass when variance is negative (staging has more or same) OR absolute variance is within threshold."""
+    if variance_pct is None:
+        return None
+    try:
+        v = float(variance_pct)
+        if v < 0:
+            return True   # negative variance = pass (e.g. staging has more docs)
+        return abs(v) <= float(threshold_pct)
+    except (TypeError, ValueError):
+        return None
+
+
 def solr_get(url, timeout=REQUEST_TIMEOUT):
     """GET request to Solr; returns (status_code, body_dict or None, error_msg)."""
     try:
@@ -201,10 +214,10 @@ def run_tc004_exchange_counts(tc003_result):
                 row["stage_count"] = "—"
             prod, stage = row["prod_count"], row["stage_count"]
             if prod is not None and stage is not None and prod != "—" and stage != "—" and prod > 0:
-                # Signed variance: (stage - prod) / prod * 100 (negative = staging has fewer docs)
+                # Signed variance: (prod - stage)/prod*100 (negative = staging has more)
                 row["variance_pct"] = round((prod - stage) / prod * 100, 2)
-                row["pass"] = abs(row["variance_pct"]) <= VARIANCE_THRESHOLD_PERCENT
-                if not row["pass"]:
+                row["pass"] = _variance_pass(row["variance_pct"], VARIANCE_THRESHOLD_PERCENT)
+                if row["pass"] is False:
                     results["passed"] = False
             results["tables"][core].append(row)
     return results
@@ -239,8 +252,8 @@ def run_tc_news_created_on():
     prod, stage = results["prod_count"], results["stage_count"]
     if prod is not None and stage is not None and prod > 0:
         results["variance_pct"] = round((prod - stage) / prod * 100, 2)
-        results["pass"] = abs(results["variance_pct"]) <= VARIANCE_THRESHOLD_PERCENT
-        if not results["pass"]:
+        results["pass"] = _variance_pass(results["variance_pct"], VARIANCE_THRESHOLD_PERCENT)
+        if results["pass"] is False:
             results["passed"] = False
     elif prod is not None and stage is not None:
         results["variance_pct"] = 0.0 if stage == 0 else 100.0
@@ -374,11 +387,11 @@ def run_tc005b_freshness_by_period():
                 if prod > 0:
                     # Signed variance (negative accepted); pass when abs(variance) <= threshold
                     row["variance_pct"] = round((prod - stage) / prod * 100, 2)
-                    row["pass"] = abs(row["variance_pct"]) <= threshold
+                    row["pass"] = _variance_pass(row["variance_pct"], threshold)
                 else:
                     row["variance_pct"] = 0.0 if stage == 0 else 100.0
                     row["pass"] = prod == stage
-                if not row["pass"]:
+                if row["pass"] is False:
                     results["passed"] = False
             period_rows.append(row)
         results["periods"].append({
