@@ -373,7 +373,7 @@ def run_tc005b_freshness_by_period():
             if prod is not None and stage is not None:
                 if prod > 0:
                     # Signed variance (negative accepted); pass when abs(variance) <= threshold
-                    row["variance_pct"] = round((stage - prod) / prod * 100, 2)
+                    row["variance_pct"] = round((prod - stage) / prod * 100, 2)
                     row["pass"] = abs(row["variance_pct"]) <= threshold
                 else:
                     row["variance_pct"] = 0.0 if stage == 0 else 100.0
