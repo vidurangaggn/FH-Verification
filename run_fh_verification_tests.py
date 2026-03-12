@@ -177,7 +177,7 @@ def run_tc003_exchange_coverage():
 
 
 def run_tc004_exchange_counts(tc003_result):
-    """TC-004: Exchange-wise document count for all cores; all exchanges (union of prod + staging). Missing = —."""
+    """TC-004: Exchange-wise document count for all cores; all exchanges (union of prod + staging). No data = 0."""
     cores = _exchange_coverage_cores()
     results = {"passed": True, "tables": {}, "errors": []}
     all_exchanges_per_core = tc003_result.get("all_exchanges_per_core") or {}
@@ -202,7 +202,7 @@ def run_tc004_exchange_counts(tc003_result):
                 else:
                     results["errors"].append(f"{core} {ex} (Prod): {err or status}")
             else:
-                row["prod_count"] = "—"
+                row["prod_count"] = 0
             if in_stage:
                 url = f"{STAGING_SOLR_URL}/solr/{core}/select?q={q}&rows=0&wt=json"
                 status, data, err = solr_get(url)
@@ -211,12 +211,17 @@ def run_tc004_exchange_counts(tc003_result):
                 else:
                     results["errors"].append(f"{core} {ex} (Stage): {err or status}")
             else:
-                row["stage_count"] = "—"
+                row["stage_count"] = 0
             prod, stage = row["prod_count"], row["stage_count"]
-            if prod is not None and stage is not None and prod != "—" and stage != "—" and prod > 0:
-                # Signed variance: (prod - stage)/prod*100 (negative = staging has more)
-                row["variance_pct"] = round((prod - stage) / prod * 100, 2)
-                row["pass"] = _variance_pass(row["variance_pct"], VARIANCE_THRESHOLD_PERCENT)
+            if prod is not None and stage is not None:
+                if prod > 0:
+                    # Signed variance: (prod - stage)/prod*100 (negative = staging has more)
+                    row["variance_pct"] = round((prod - stage) / prod * 100, 2)
+                    row["pass"] = _variance_pass(row["variance_pct"], VARIANCE_THRESHOLD_PERCENT)
+                else:
+                    # Both 0 or prod=0: no variance; pass when prod == stage
+                    row["variance_pct"] = 0.0 if stage == 0 else 100.0
+                    row["pass"] = (prod == stage)
                 if row["pass"] is False:
                     results["passed"] = False
             results["tables"][core].append(row)
