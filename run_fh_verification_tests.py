@@ -18,8 +18,8 @@ from urllib.error import URLError, HTTPError
 try:
     import config as cfg
 except ImportError:
-    PRODUCTION_SOLR_URL = "http://172.20.178.40:8985"
-    STAGING_SOLR_URL = "http://172.20.178.240:8985"
+    PRODUCTION_SOLR_URL = "http://172.20.162.40:8985"
+    STAGING_SOLR_URL = "http://172.20.162.250:8985"
     REQUIRED_CORES = [
         "FINANCIAL_RATIOS", "FH_FINANCIAL_RATIOS", "EARNINGS", "EARNINGS_HISTORY",
         "ACTUAL_EARNINGS_HISTORY", "PERFORMANCE_DATA", "TREND_DATA", "TECH",
@@ -37,6 +37,7 @@ except ImportError:
     PERIOD_COUNT_CORE_MAP = {}
     NEWS_DATE_FIELD = "CREATED_ON"
     NEWS_DATE_PERIOD_MONTHS = 3
+    NEWS_DATE_FORMAT = None
     RUN_MODE = "both"
 else:
     PRODUCTION_SOLR_URL = cfg.PRODUCTION_SOLR_URL
@@ -53,6 +54,7 @@ else:
     PERIOD_COUNT_CORE_MAP = getattr(cfg, "PERIOD_COUNT_CORE_MAP", {}) or {}
     NEWS_DATE_FIELD = getattr(cfg, "NEWS_DATE_FIELD", "CREATED_ON")
     NEWS_DATE_PERIOD_MONTHS = getattr(cfg, "NEWS_DATE_PERIOD_MONTHS", 3)
+    NEWS_DATE_FORMAT = getattr(cfg, "NEWS_DATE_FORMAT", None)
     RUN_MODE = getattr(cfg, "RUN_MODE", "both").strip().lower()
     if RUN_MODE not in ("solr", "logs", "both"):
         RUN_MODE = "both"
@@ -232,21 +234,43 @@ def run_tc004_exchange_counts(tc003_result):
     return results
 
 
-# --- NEWS core: date-period comparison (CREATED_ON) ---
+# --- NEWS core: date-period comparison (CREATED_ON / DATETIME) ---
 
-def run_tc_news_created_on():
-    """NEWS core: compare document count where CREATED_ON is within the last N months (configurable, default 3).
-    Uses Solr date math e.g. CREATED_ON:[NOW-3MONTHS TO *]."""
+def _news_date_range_yyyymmddhhmmss(months):
+    """Return (start_str, end_str) in YYYYMMDDHHmmss for last N months (UTC). For DATETIME field like 20250108161604."""
+    now = datetime.now(timezone.utc)
+    end_str = now.strftime("%Y%m%d%H%M%S")
+    year, month = now.year, now.month
+    month -= months
+    while month <= 0:
+        month += 12
+        year -= 1
+    # First day of that month (avoids day overflow)
+    start_dt = datetime(year, month, 1, 0, 0, 0, 0, tzinfo=timezone.utc)
+    start_str = start_dt.strftime("%Y%m%d%H%M%S")
+    return start_str, end_str
+
+
+def run_tc_news_created_on(tc003_result=None):
+    """NEWS core: compare document count where date field is within the last N months.
+    Supports CREATED_ON (Solr date math) or DATETIME with format YYYYMMDDHHmmss (e.g. 20250108161604).
+    When NEWS_DATE_FORMAT is YYYYMMDDHHmmss, also returns exchange-wise counts in the date period."""
     results = {"passed": True, "core": "NEWS", "prod_count": None, "stage_count": None,
-               "variance_pct": None, "pass": None, "period_months": None, "field": None, "errors": []}
+               "variance_pct": None, "pass": None, "period_months": None, "field": None, "errors": [],
+               "exchange_rows": []}
     if "NEWS" not in REQUIRED_CORES:
         return results
     field = getattr(sys.modules[__name__], "NEWS_DATE_FIELD", "CREATED_ON")
     months = getattr(sys.modules[__name__], "NEWS_DATE_PERIOD_MONTHS", 3)
+    date_fmt = getattr(sys.modules[__name__], "NEWS_DATE_FORMAT", None) or ""
     results["field"] = field
     results["period_months"] = months
-    # Solr date math: [NOW-3MONTHS TO *] = from 3 months ago to now
-    fq_val = quote(f"{field}:[NOW-{months}MONTHS TO *]")
+    use_string_range = (date_fmt.upper() == "YYYYMMDDHHMMSS")
+    if use_string_range:
+        start_str, end_str = _news_date_range_yyyymmddhhmmss(months)
+        fq_val = quote(f"{field}:[{start_str} TO {end_str}]")
+    else:
+        fq_val = quote(f"{field}:[NOW-{months}MONTHS TO *]")
     for env_name, base_url in [("Production", PRODUCTION_SOLR_URL), ("Staging", STAGING_SOLR_URL)]:
         url = f"{base_url}/solr/NEWS/select?q=*:*&fq={fq_val}&rows=0&wt=json"
         status, data, err = solr_get(url)
@@ -258,6 +282,33 @@ def run_tc_news_created_on():
             results["prod_count"] = n
         else:
             results["stage_count"] = n
+    # Exchange-wise count in date period (when DATETIME string format and we have exchange list)
+    if use_string_range and tc003_result and results["errors"] == []:
+        exchange_list = (tc003_result.get("all_exchanges_per_core") or {}).get("NEWS") or []
+        ex_field = (tc003_result.get("field_per_core") or {}).get("NEWS") or EXCHANGE_FIELD
+        for ex in exchange_list:
+            q_ex = quote(f'{ex_field}:"{ex}"')
+            row = {"exchange": ex, "prod_count": 0, "stage_count": 0, "variance_pct": None, "pass": None}
+            for env_name, base_url in [("Production", PRODUCTION_SOLR_URL), ("Staging", STAGING_SOLR_URL)]:
+                url = f"{base_url}/solr/NEWS/select?q={q_ex}&fq={fq_val}&rows=0&wt=json"
+                status, data, err = solr_get(url)
+                if status == 200 and data:
+                    n = (data.get("response") or {}).get("numFound")
+                    if env_name == "Production":
+                        row["prod_count"] = n
+                    else:
+                        row["stage_count"] = n
+            prod, stage = row["prod_count"], row["stage_count"]
+            if prod is not None and stage is not None:
+                if prod > 0:
+                    row["variance_pct"] = round((prod - stage) / prod * 100, 2)
+                    row["pass"] = _variance_pass(row["variance_pct"], VARIANCE_THRESHOLD_PERCENT)
+                else:
+                    row["variance_pct"] = VARIANCE_UNDEFINED
+                    row["pass"] = None
+                if row["pass"] is False:
+                    results["passed"] = False
+            results["exchange_rows"].append(row)
     prod, stage = results["prod_count"], results["stage_count"]
     if prod is not None and stage is not None and prod > 0:
         results["variance_pct"] = round((prod - stage) / prod * 100, 2)
@@ -851,6 +902,18 @@ pre {{ background: #eee; padding: 12px; overflow-x: auto; font-size: 13px; }}
         nd_var_str = "—" if nd_var is None or nd_var == VARIANCE_UNDEFINED else str(nd_var)
         html += f"<tr class=\"{row_cl}\"><td>{nd.get('core', 'NEWS')}</td><td>{nd.get('field', '—')}</td><td>Last {nd.get('period_months', '—')} months</td><td>{nd.get('prod_count') if nd.get('prod_count') is not None else '—'}</td><td>{nd.get('stage_count') if nd.get('stage_count') is not None else '—'}</td><td>{nd_var_str}</td><td class=\"{cell_cl}\">{tr(p_nd) if p_nd is not None else '—'}</td></tr>\n"
         html += "</tbody></table>\n"
+        # Exchange-wise count in date period (when DATETIME YYYYMMDDHHmmss format)
+        if tc_news_date.get("exchange_rows"):
+            html += "<h4>NEWS exchange-wise count (same date period)</h4>\n"
+            html += "<table>\n<thead><tr><th>Exchange</th><th>Prod count</th><th>Stage count</th><th>Variance %</th><th>Pass</th></tr></thead>\n<tbody>\n"
+            for r in tc_news_date["exchange_rows"]:
+                v = r.get("variance_pct")
+                p = r.get("pass")
+                v_str = "—" if v is None or v == VARIANCE_UNDEFINED else str(v)
+                row_cl = "fail" if p is False else ""
+                cell_cl = tr_class(p) if p is not None else ""
+                html += f"<tr class=\"{row_cl}\"><td>{r.get('exchange')}</td><td>{r.get('prod_count')}</td><td>{r.get('stage_count')}</td><td>{v_str}</td><td class=\"{cell_cl}\">{tr(p) if p is not None else '—'}</td></tr>\n"
+            html += "</tbody></table>\n"
 
     html += """
 <h2>Test Suite 3: Data Freshness</h2>
@@ -954,8 +1017,8 @@ def main():
     tc003 = run_tc003_exchange_coverage()
     print("  TC-004: Exchange-wise counts...")
     tc004 = run_tc004_exchange_counts(tc003)
-    print("  NEWS: CREATED_ON date-period comparison...")
-    tc_news_date = run_tc_news_created_on()
+    print("  NEWS: date-period comparison (DATETIME/CREATED_ON)...")
+    tc_news_date = run_tc_news_created_on(tc003)
     print("  TC-005: Latest timestamps...")
     tc005 = run_tc005_latest_timestamp()
     print("  TC-006: Schedule verification...")

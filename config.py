@@ -7,8 +7,8 @@
 RUN_MODE = "solr"
 
 # Solr base URLs (no trailing slash). Port 8985 per Readme.
-PRODUCTION_SOLR_URL = "http://172.20.178.40:8985"
-STAGING_SOLR_URL = "http://172.20.178.240:8985"
+PRODUCTION_SOLR_URL = "http://172.20.162.40:8985"
+STAGING_SOLR_URL = "http://172.20.162.250:8985"
 
 # All 16 required cores from config/solr.yml (per Readme)
 REQUIRED_CORES = [
@@ -51,10 +51,13 @@ FRESHNESS_PERIOD_END_HOURS_AGO = 1
 # For period-based freshness: pass if (Prod - Stage) count variance <= this %
 WRITE_COUNT_VARIANCE_THRESHOLD_PERCENT = 10.0
 
-# NEWS core: date-based comparison using CREATED_ON (e.g. "2023-01-05T10:20:10Z")
-# Count documents with CREATED_ON in the last N months (Prod vs Staging)
-NEWS_DATE_FIELD = "CREATED_ON"
+# NEWS core: date-based comparison. Field can be:
+#   - CREATED_ON with ISO dates: use Solr date math [NOW-NMONTHS TO *]
+#   - DATETIME with string "YYYYMMDDHHmmss" (e.g. "20250108161604"): set NEWS_DATE_FORMAT = "YYYYMMDDHHmmss"
+NEWS_DATE_FIELD = "DATETIME"
 NEWS_DATE_PERIOD_MONTHS = 3
+# "YYYYMMDDHHmmss" for string DATETIME like 20250108161604; "iso" or leave unset for Solr date math
+NEWS_DATE_FORMAT = "YYYYMMDDHHmmss"
 
 # Optional: if your Solr uses different core names for the period-count query (e.g. with _ALL suffix),
 # set this to map logical name -> actual core name. Example: {"FINANCIAL_RATIOS": "FINANCIAL_RATIOS_ALL"}.
