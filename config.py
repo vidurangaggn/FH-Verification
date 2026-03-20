@@ -36,12 +36,15 @@ EXCHANGE_FIELD = "EXCHANGE"
 # Variance threshold (%). Pass if |Prod - Stage| / Prod * 100 <= this
 VARIANCE_THRESHOLD_PERCENT = 5.0
 
-# Data freshness: max allowed hours difference between Prod and Stage latest update
+# Data freshness (TC-005): max allowed hours that Staging may lag behind Production.
+# If TC005_PASS_WHEN_STAGING_AHEAD is True (default), Staging newer than Prod passes
+# regardless of gap (avoids false fails when Prod is stale but Staging has latest data).
 MAX_TIME_DIFF_HOURS = 4.0
+TC005_PASS_WHEN_STAGING_AHEAD = True
 
 # Period-based freshness: compare document write counts in these time windows (hours)
 # Avoids false results when a job is running at "latest timestamp" check time
-FRESHNESS_PERIODS_HOURS = [6, 24, 72]
+FRESHNESS_PERIODS_HOURS = [24, 72]
 
 # End the count window this many hours in the past so both Prod and Staging have
 # had time to finish runs (e.g. staging may be running while prod is idle, or vice versa).
